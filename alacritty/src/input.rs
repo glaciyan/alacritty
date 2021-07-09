@@ -236,10 +236,20 @@ impl<T: EventListener> Execute<T> for Action {
             Action::Copy => ctx.copy_selection(ClipboardType::Clipboard),
             #[cfg(not(any(target_os = "macos", windows)))]
             Action::CopySelection => ctx.copy_selection(ClipboardType::Selection),
+            Action::CopyDynamic => {
+                if ctx.selection_is_empty() {
+                    *ctx.suppress_chars() = false;
+                } else {
+                    ctx.copy_selection(ClipboardType::Clipboard);
+                    ctx.clear_selection();
+                    *ctx.suppress_chars() = true;
+                }
+            },
             Action::ClearSelection => ctx.clear_selection(),
             Action::Paste => {
                 let text = ctx.clipboard_mut().load(ClipboardType::Clipboard);
                 ctx.paste(&text);
+                *ctx.suppress_chars() = true;
             },
             Action::PasteSelection => {
                 let text = ctx.clipboard_mut().load(ClipboardType::Selection);
@@ -852,7 +862,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
     fn process_key_bindings(&mut self, input: KeyboardInput) {
         let mode = BindingMode::new(self.ctx.terminal().mode(), self.ctx.search_active());
         let mods = *self.ctx.modifiers();
-        let mut suppress_chars = None;
+        let mut suppress_chars = false;
 
         for i in 0..self.ctx.config().ui_config.key_bindings().len() {
             let binding = &self.ctx.config().ui_config.key_bindings()[i];
@@ -864,16 +874,18 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             };
 
             if binding.is_triggered_by(mode, mods, &key) {
-                // Pass through the key if any of the bindings has the `ReceiveChar` action.
-                *suppress_chars.get_or_insert(true) &= binding.action != Action::ReceiveChar;
-
+                let binding = binding.clone();
                 // Binding was triggered; run the action.
-                binding.action.clone().execute(&mut self.ctx);
+                binding.action.execute(&mut self.ctx);
+
+                // Pass through the key if any of the bindings has the `ReceiveChar` action.
+                suppress_chars =
+                    binding.action != Action::ReceiveChar && *self.ctx.suppress_chars();
             }
         }
 
         // Don't suppress char if no bindings were triggered.
-        *self.ctx.suppress_chars() = suppress_chars.unwrap_or(false);
+        *self.ctx.suppress_chars() = suppress_chars;
     }
 
     /// Attempt to find a binding and execute its action.
