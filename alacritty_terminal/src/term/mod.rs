@@ -406,7 +406,7 @@ impl<T> Term<T> {
 
             // Skip over cells until next tab-stop once a tab was found.
             if tab_mode {
-                if self.tabs[column] {
+                if self.tabs[column] || cell.c != ' ' {
                     tab_mode = false;
                 } else {
                     continue;
@@ -562,6 +562,12 @@ impl<T> Term<T> {
         self.selection =
             self.selection.take().and_then(|s| s.rotate(self, &region, -(lines as i32)));
 
+        // Scroll vi mode cursor.
+        let line = &mut self.vi_mode_cursor.point.line;
+        if region.start <= *line && region.end > *line {
+            *line = min(*line + lines, region.end - 1);
+        }
+
         // Scroll between origin and bottom
         self.grid.scroll_down(&region, lines);
     }
@@ -580,6 +586,14 @@ impl<T> Term<T> {
 
         // Scroll selection.
         self.selection = self.selection.take().and_then(|s| s.rotate(self, &region, lines as i32));
+
+        // Scroll vi mode cursor.
+        let viewport_top = Line(-(self.grid.display_offset() as i32));
+        let top = if region.start == 0 { viewport_top } else { region.start };
+        let line = &mut self.vi_mode_cursor.point.line;
+        if (top <= *line) && region.end > *line {
+            *line = max(*line - lines, top);
+        }
 
         // Scroll from origin to bottom less number of lines.
         self.grid.scroll_up(&region, lines);
@@ -778,9 +792,9 @@ impl<T> Term<T> {
             // Remove wide char and spacer.
             let wide = cursor_cell.flags.contains(Flags::WIDE_CHAR);
             let point = self.grid.cursor.point;
-            if wide && point.column + 1 < self.columns() {
+            if wide && point.column <= self.last_column() {
                 self.grid[point.line][point.column + 1].flags.remove(Flags::WIDE_CHAR_SPACER);
-            } else {
+            } else if point.column > 0 {
                 self.grid[point.line][point.column - 1].clear_wide();
             }
 
